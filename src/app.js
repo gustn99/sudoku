@@ -85,6 +85,7 @@ function openLevel(level) {
     state.game = { index: state.completed, values: Array(81).fill(0), notes: Array.from({ length: 81 }, () => []), seconds: 0, mistakes: 0 };
     saveStore();
   }
+  if (removeInvalidNotes()) saveStore();
   selected = -1; noteMode = false; paused = false; undoStack = [];
   renderGame(); startClock();
 }
@@ -96,6 +97,26 @@ function digitCompleted(digit) {
 }
 function related(a, b) {
   return Math.floor(a / 9) === Math.floor(b / 9) || a % 9 === b % 9 || (Math.floor(a / 27) === Math.floor(b / 27) && Math.floor(a % 9 / 3) === Math.floor(b % 9 / 3));
+}
+function hasConfirmedPeer(cell, digit) {
+  return Array.from({ length: 81 }, (_, i) => i).some(i =>
+    i !== cell && related(i, cell) && visibleValue(i) === digit && Number(puzzle().solution[i]) === digit
+  );
+}
+function removeRelatedNotes(cell, digit) {
+  game().notes.forEach((notes, i) => {
+    if (i !== cell && related(i, cell) && notes.includes(digit)) {
+      game().notes[i] = notes.filter(note => note !== digit);
+    }
+  });
+}
+function removeInvalidNotes() {
+  let changed = false;
+  game().notes.forEach((notes, i) => {
+    const valid = notes.filter(digit => !hasConfirmedPeer(i, digit));
+    if (valid.length !== notes.length) { game().notes[i] = valid; changed = true; }
+  });
+  return changed;
 }
 function cellMarkup(i) {
   const value = visibleValue(i);
@@ -145,8 +166,9 @@ function enterNumber(digit) {
   const state = game();
   if (noteMode) {
     if (state.values[selected]) { showToast('숫자가 있는 칸에는 메모할 수 없어요.'); return; }
-    snapshot();
     const notes = state.notes[selected];
+    if (!notes.includes(digit) && hasConfirmedPeer(selected, digit)) { showToast('같은 줄이나 3×3 칸에 이미 있는 숫자예요.'); return; }
+    snapshot();
     state.notes[selected] = notes.includes(digit) ? notes.filter(n => n !== digit) : [...notes, digit].sort();
   } else {
     if (state.values[selected] === digit) return;
@@ -154,6 +176,7 @@ function enterNumber(digit) {
     state.values[selected] = digit;
     state.notes[selected] = [];
     if (digit !== Number(puzzle().solution[selected])) state.mistakes += 1;
+    else removeRelatedNotes(selected, digit);
   }
   saveStore(); renderGame(); checkWin();
 }
@@ -171,6 +194,7 @@ function hint() {
   if (paused || !editable()) return;
   if (game().values[selected] === Number(puzzle().solution[selected])) { showToast('이미 맞는 숫자예요.'); return; }
   snapshot(); game().values[selected] = Number(puzzle().solution[selected]); game().notes[selected] = [];
+  removeRelatedNotes(selected, game().values[selected]);
   saveStore(); renderGame(); checkWin();
 }
 function checkWin() {
