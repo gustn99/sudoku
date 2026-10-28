@@ -91,6 +91,9 @@ function openLevel(level) {
 
 function isGiven(i) { return puzzle().puzzle[i] !== '0'; }
 function visibleValue(i) { return isGiven(i) ? Number(puzzle().puzzle[i]) : game().values[i]; }
+function digitCompleted(digit) {
+  return Array.from({ length: 81 }, (_, i) => i).every(i => Number(puzzle().solution[i]) !== digit || visibleValue(i) === digit);
+}
 function related(a, b) {
   return Math.floor(a / 9) === Math.floor(b / 9) || a % 9 === b % 9 || (Math.floor(a / 27) === Math.floor(b / 27) && Math.floor(a % 9 / 3) === Math.floor(b % 9 / 3));
 }
@@ -116,7 +119,7 @@ function renderGame() {
     <div class="game-meta"><div><small>난이도</small><strong>${level.name}</strong></div><div><small>실수</small><strong id="mistake-label">${game().mistakes}회</strong></div><div><small>시간</small><strong id="time-label">${formatTime(game().seconds)}</strong></div><button class="pause-button" id="pause-button" aria-label="일시정지">${icon('pause')}</button></div>
     <div class="board-wrap"><div class="board" role="grid" aria-label="스도쿠 게임판">${Array.from({ length: 81 }, (_, i) => cellMarkup(i)).join('')}</div></div>
     <div class="game-bottom"><div class="tools"><button class="tool" id="undo-button" aria-label="실행 취소" ${undoStack.length ? '' : 'disabled'}>${icon('undo')}<span>실행 취소</span></button><button class="tool" id="erase-button" aria-label="선택 칸 지우기">${icon('erase')}<span>지우기</span></button><button class="tool ${noteMode ? 'active' : ''}" id="notes-button" aria-pressed="${noteMode}">${icon('notes')}<span>메모 <b>${noteMode ? '켜짐' : '꺼짐'}</b></span></button><button class="tool" id="hint-button" aria-label="선택 칸 힌트">${icon('hint')}<span>힌트</span></button></div>
-    <div class="keypad" aria-label="숫자 입력">${Array.from({ length: 9 }, (_, i) => `<button data-digit="${i + 1}" aria-label="숫자 ${i + 1}">${i + 1}</button>`).join('')}</div></div>
+    <div class="keypad" aria-label="숫자 입력">${Array.from({ length: 9 }, (_, i) => `<button data-digit="${i + 1}" aria-label="숫자 ${i + 1}${digitCompleted(i + 1) ? ', 모두 채움' : ''}" ${digitCompleted(i + 1) ? 'disabled' : ''}>${i + 1}</button>`).join('')}</div></div>
     ${paused ? `<div class="overlay"><div class="dialog"><div class="dialog-symbol">Ⅱ</div><p class="eyebrow">잠시 쉬어가세요</p><h2>일시정지</h2><p>게임판과 시간이 멈췄습니다.</p><button class="primary-button" id="resume-button">계속 풀기 ${icon('arrow')}</button><button class="text-button" id="pause-home-button">홈으로</button></div></div>` : ''}
   </section>`;
   app.querySelector('#home-button').addEventListener('click', renderHome);
@@ -138,7 +141,7 @@ function editable() {
   return true;
 }
 function enterNumber(digit) {
-  if (paused || !editable()) return;
+  if (paused || digitCompleted(digit) || !editable()) return;
   const state = game();
   if (noteMode) {
     if (state.values[selected]) { showToast('숫자가 있는 칸에는 메모할 수 없어요.'); return; }
