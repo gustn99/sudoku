@@ -59,3 +59,25 @@
 .setting-switch span{position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;background:#fff;box-shadow:0 1px 4px #173d4540;transition:transform .15s}
 .setting-switch[aria-checked="true"] span{transform:translateX(20px)}
 .settings-done{margin-top:20px}
+.picker-shell{display:flex;flex-direction:column;width:min(100%,560px);height:100dvh;min-height:0;overflow:hidden;margin:auto;padding:max(10px,env(safe-area-inset-top)) 16px calc(clamp(50px,10dvh,80px) + env(safe-area-inset-bottom))}
+.picker-header{display:grid;grid-template-columns:42px 1fr auto;align-items:center;gap:8px;flex:none;padding:8px 0 16px;border-bottom:1px solid #d9dfda}
+.picker-header .icon-button{margin-left:-9px}
+.picker-header>div{min-width:0}
+.picker-header small{display:block;color:#dd794e;font-size:11px;font-weight:800}
+.picker-header h1{font-size:24px;line-height:1.2;letter-spacing:-.05em;margin:3px 0 0}
+.picker-count{color:#6f8384;font-size:12px;font-weight:700;white-space:nowrap}
+.picker-legend{display:flex;align-items:center;justify-content:center;gap:18px;flex:none;padding:14px 0;color:#6f8384;font-size:11px}
+.picker-legend span{display:flex;align-items:center;gap:5px;white-space:nowrap}
+.picker-legend span::before{content:'';width:9px;height:9px;border-radius:3px;background:#fffefa;border:1px solid #cfdad7}
+.picker-legend .in-progress::before{background:#fff0e3;border-color:#e6a679}
+.picker-legend .completed::before{background:#dceee6;border-color:#91c2ae}
+.picker-scroll{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;padding:2px 2px 12px}
+.puzzle-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.puzzle-tile{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-width:0;height:clamp(66px,20vw,90px);padding:4px;border:1px solid #d5dfdc;border-radius:12px;background:#fffefa;color:#173d45;touch-action:manipulation}
+.puzzle-tile strong{font-size:20px;line-height:1;font-weight:800}
+.puzzle-tile small{font-size:10px;line-height:1.2;color:#7c9290;white-space:nowrap}
+.puzzle-tile.in-progress{border-color:#e8a67c;background:#fff0e5;color:#b85c32}
+.puzzle-tile.in-progress small{color:#b85c32}
+.puzzle-tile.completed{border-color:#9bc7b7;background:#e2f1ea;color:#2a7864}
+.puzzle-tile.completed small{color:#2a7864}
+@media(max-width:350px){.puzzle-grid{gap:5px}.puzzle-tile{border-radius:9px}.puzzle-tile strong{font-size:18px}.puzzle-tile small{font-size:9px}.picker-legend{gap:11px}}

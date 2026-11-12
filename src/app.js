@@ -10,6 +10,8 @@ let puzzles;
 let store = loadStore();
 let screen = 'home';
 let activeLevel = null;
+let activePuzzle = null;
+let selectionScrollTop = 0;
 let selected = -1;
 let noteMode = false;
 let showNotes = true;
@@ -19,12 +21,26 @@ let undoStack = [];
 let tickHandle;
 let lastTick = 0;
 
+function normalizeLevel(savedLevel) {
+  return { entries: Array.from({ length: 100 }, (_, index) => {
+    const entry = savedLevel?.entries?.[index];
+    if (entry) return { completed: entry.completed === true, game: entry.game ?? null };
+    return {
+      completed: index < (savedLevel?.completed ?? 0),
+      game: savedLevel?.game?.index === index ? savedLevel.game : null,
+    };
+  }) };
+}
+
 function loadStore() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    if (saved?.levels) return { ...saved, settings: { ...saved.settings, showMistakes: saved.settings?.showMistakes !== false } };
+    if (saved?.levels) return {
+      levels: Object.fromEntries(LEVELS.map(level => [level.id, normalizeLevel(saved.levels[level.id])])),
+      settings: { ...saved.settings, showMistakes: saved.settings?.showMistakes !== false },
+    };
   } catch { /* Corrupt or unavailable storage starts a fresh local game. */ }
-  return { levels: Object.fromEntries(LEVELS.map(level => [level.id, { completed: 0, game: null }])), settings: { showMistakes: true } };
+  return { levels: Object.fromEntries(LEVELS.map(level => [level.id, normalizeLevel()])), settings: { showMistakes: true } };
 }
 
 function saveStore() {
@@ -33,8 +49,9 @@ function saveStore() {
 }
 
 function levelState() { return store.levels[activeLevel]; }
-function game() { return levelState().game; }
-function puzzle() { return puzzles[activeLevel][levelState().completed]; }
+function currentEntry() { return levelState().entries[activePuzzle]; }
+function game() { return currentEntry().game; }
+function puzzle() { return puzzles[activeLevel][activePuzzle]; }
 function formatTime(seconds) {
   const hours = Math.floor(seconds / 3600);
   const mins = Math.floor(seconds / 60) % 60;
@@ -65,29 +82,53 @@ function renderHome() {
   screen = 'home';
   const cards = LEVELS.map(level => {
     const state = store.levels[level.id];
-    const done = Math.min(100, state.completed);
-    const label = done === 100 ? '모두 완료' : state.game ? `${done + 1}번 이어하기` : `${done + 1}번 시작`;
+    const done = state.entries.filter(entry => entry.completed).length;
+    const inProgress = state.entries.filter(entry => entry.game).length;
+    const label = inProgress ? `${inProgress}개 진행 중` : done === 100 ? '모두 완료' : '문제 선택';
     return `<button class="level-card" data-level="${level.id}" aria-label="${level.name}, ${done}개 완료, ${label}">
       <span class="level-mark">${level.mark}</span><span class="level-main"><strong>${level.name}</strong><span class="progress-track"><span style="width:${done}%"></span></span></span>
       <span class="level-side"><span>${done}<span class="muted"> / 100</span></span><small>${label} ${icon('arrow')}</small></span>
     </button>`;
   }).join('');
   app.innerHTML = `<section class="home-shell"><header class="home-header"><div class="brand-icon">9</div><span>HARU SUDOKU</span></header>
-    <div class="hero"><h1>하루 <em>스도쿠</em></h1><p>원하는 난이도를 골라 차례대로 풀어보세요.<br>진행 상황은 이 기기에 저장됩니다.</p></div>
+    <div class="hero"><h1>하루 <em>스도쿠</em></h1><p>난이도와 문제 번호를 골라 풀어보세요.<br>진행 상황은 이 기기에 저장됩니다.</p></div>
     <div class="level-section"><div class="section-heading"><h2>난이도 선택</h2></div><div class="level-list">${cards}</div></div></section>`;
   app.querySelectorAll('[data-level]').forEach(button => button.addEventListener('click', () => openLevel(button.dataset.level)));
 }
 
 function openLevel(level) {
   activeLevel = level;
-  const state = levelState();
-  if (state.completed >= 100) {
-    if (confirm(`${LEVELS.find(item => item.id === level).name} 100문제를 모두 풀었습니다. 처음부터 다시 시작할까요? 이 난이도의 완료 기록이 초기화됩니다.`)) {
-      state.completed = 0; state.game = null; saveStore();
-    } else return;
-  }
-  if (!state.game || state.game.index !== state.completed) {
-    state.game = { index: state.completed, values: Array(81).fill(0), notes: Array.from({ length: 81 }, () => []), seconds: 0, mistakes: 0 };
+  selectionScrollTop = 0;
+  renderPuzzleSelect();
+}
+
+function renderPuzzleSelect() {
+  stopClock();
+  screen = 'select';
+  const level = LEVELS.find(item => item.id === activeLevel);
+  const entries = levelState().entries;
+  const done = entries.filter(entry => entry.completed).length;
+  const tiles = entries.map((entry, index) => {
+    const status = entry.game ? '진행 중' : entry.completed ? '완료' : '시작 전';
+    const className = entry.game ? 'in-progress' : entry.completed ? 'completed' : 'not-started';
+    return `<button class="puzzle-tile ${className}" data-puzzle="${index}" aria-label="${index + 1}번 문제, ${status}"><strong>${index + 1}</strong><small>${status}</small></button>`;
+  }).join('');
+  app.innerHTML = `<section class="picker-shell"><header class="picker-header"><button class="icon-button" id="picker-home" aria-label="난이도 선택으로">${icon('back')}</button><div><small>${level.name}</small><h1>문제 선택</h1></div><span class="picker-count">${done} / 100 완료</span></header>
+    <div class="picker-legend"><span class="not-started">시작 전</span><span class="in-progress">진행 중</span><span class="completed">완료</span></div>
+    <div class="picker-scroll"><div class="puzzle-grid">${tiles}</div></div></section>`;
+  app.querySelector('#picker-home').addEventListener('click', renderHome);
+  const scroller = app.querySelector('.picker-scroll');
+  scroller.scrollTop = selectionScrollTop;
+  scroller.addEventListener('scroll', () => { selectionScrollTop = scroller.scrollTop; });
+  app.querySelectorAll('[data-puzzle]').forEach(button => button.addEventListener('click', () => openPuzzle(Number(button.dataset.puzzle))));
+}
+
+function openPuzzle(index) {
+  if (!Number.isInteger(index) || index < 0 || index >= 100) return;
+  activePuzzle = index;
+  const entry = currentEntry();
+  if (!entry.game) {
+    entry.game = { values: Array(81).fill(0), notes: Array.from({ length: 81 }, () => []), seconds: 0, mistakes: 0 };
     saveStore();
   }
   if (removeInvalidNotes()) saveStore();
@@ -149,15 +190,15 @@ function settingsMarkup() {
 function renderGame() {
   screen = 'game';
   const level = LEVELS.find(item => item.id === activeLevel);
-  app.innerHTML = `<section class="game-shell"><header class="game-header"><button class="icon-button" id="home-button" aria-label="홈으로">${icon('back')}</button><div class="game-title"><span>하루 스도쿠</span><small>${level.name} · ${levelState().completed + 1} / 100</small></div><button class="icon-button settings-button" id="settings-button" aria-label="게임 설정">${icon('settings')}</button></header>
+  app.innerHTML = `<section class="game-shell"><header class="game-header"><button class="icon-button" id="home-button" aria-label="문제 선택으로">${icon('back')}</button><div class="game-title"><span>하루 스도쿠</span><small>${level.name} · ${activePuzzle + 1}번 문제</small></div><button class="icon-button settings-button" id="settings-button" aria-label="게임 설정">${icon('settings')}</button></header>
     <div class="game-meta"><div><small>난이도</small><strong>${level.name}</strong></div><div><small>실수</small><strong id="mistake-label">${game().mistakes}회</strong></div><div><small>시간</small><strong id="time-label">${formatTime(game().seconds)}</strong></div><button class="pause-button" id="pause-button" aria-label="일시정지">${icon('pause')}</button></div>
     <div class="board-wrap"><div class="board" role="grid" aria-label="스도쿠 게임판">${Array.from({ length: 81 }, (_, i) => cellMarkup(i)).join('')}</div></div>
     <div class="game-bottom"><div class="tools"><button class="tool" id="undo-button" aria-label="실행 취소" ${undoStack.length ? '' : 'disabled'}>${icon('undo')}<span>실행 취소</span></button><button class="tool" id="erase-button" aria-label="선택 칸 지우기">${icon('erase')}<span>지우기</span></button><button class="tool ${noteMode ? 'active' : ''}" id="notes-button" aria-label="메모 입력 ${noteMode ? '켜짐' : '꺼짐'}" aria-pressed="${noteMode}">${icon('notes')}<span>메모 입력</span></button><button class="tool ${showNotes ? 'active' : ''}" id="show-notes-button" aria-label="메모 표시 ${showNotes ? '켜짐' : '꺼짐'}" aria-pressed="${showNotes}">${icon(showNotes ? 'eye' : 'eyeOff')}<span>메모 표시</span></button><button class="tool" id="hint-button" aria-label="선택 칸 힌트">${icon('hint')}<span>힌트</span></button></div>
     <div class="keypad" aria-label="숫자 입력">${Array.from({ length: 9 }, (_, i) => `<button data-digit="${i + 1}" aria-label="숫자 ${i + 1}${digitCompleted(i + 1) ? ', 모두 채움' : ''}" ${digitCompleted(i + 1) ? 'disabled' : ''}>${i + 1}</button>`).join('')}</div></div>
-    ${paused ? `<div class="overlay"><div class="dialog"><div class="dialog-symbol">Ⅱ</div><p class="eyebrow">잠시 쉬어가세요</p><h2>일시정지</h2><p>게임판과 시간이 멈췄습니다.</p><button class="primary-button" id="resume-button">계속 풀기 ${icon('arrow')}</button><button class="text-button" id="pause-home-button">홈으로</button></div></div>` : ''}
+    ${paused ? `<div class="overlay"><div class="dialog"><div class="dialog-symbol">Ⅱ</div><p class="eyebrow">잠시 쉬어가세요</p><h2>일시정지</h2><p>게임판과 시간이 멈췄습니다.</p><button class="primary-button" id="resume-button">계속 풀기 ${icon('arrow')}</button><button class="text-button" id="pause-home-button">문제 선택으로</button></div></div>` : ''}
     ${settingsOpen ? settingsMarkup() : ''}
   </section>`;
-  app.querySelector('#home-button').addEventListener('click', renderHome);
+  app.querySelector('#home-button').addEventListener('click', renderPuzzleSelect);
   app.querySelector('#pause-button').addEventListener('click', togglePause);
   app.querySelector('#settings-button').addEventListener('click', toggleSettings);
   app.querySelector('#undo-button').addEventListener('click', undo);
@@ -168,7 +209,7 @@ function renderGame() {
   app.querySelectorAll('[data-cell]').forEach(button => button.addEventListener('click', () => { selected = Number(button.dataset.cell); renderGame(); }));
   app.querySelectorAll('[data-digit]').forEach(button => button.addEventListener('click', () => enterNumber(Number(button.dataset.digit))));
   app.querySelector('#resume-button')?.addEventListener('click', togglePause);
-  app.querySelector('#pause-home-button')?.addEventListener('click', renderHome);
+  app.querySelector('#pause-home-button')?.addEventListener('click', renderPuzzleSelect);
   app.querySelector('#settings-close')?.addEventListener('click', toggleSettings);
   app.querySelector('#settings-done')?.addEventListener('click', toggleSettings);
   app.querySelector('#wrong-toggle')?.addEventListener('click', () => { store.settings.showMistakes = !store.settings.showMistakes; saveStore(); renderGame(); app.querySelector('#wrong-toggle')?.focus(); });
@@ -219,12 +260,12 @@ function hint() {
 function checkWin() {
   if (!game().values.every((value, i) => isGiven(i) || value === Number(puzzle().solution[i]))) return;
   stopClock();
-  const finished = { seconds: game().seconds, mistakes: game().mistakes, number: levelState().completed + 1 };
-  levelState().completed += 1; levelState().game = null; saveStore();
+  const finished = { seconds: game().seconds, mistakes: game().mistakes, number: activePuzzle + 1 };
+  currentEntry().completed = true; currentEntry().game = null; saveStore();
   screen = 'win';
   const level = LEVELS.find(item => item.id === activeLevel);
-  app.innerHTML = `<section class="win-shell"><div class="win-symbol">✓</div><p class="eyebrow">${level.name} · ${finished.number}번 문제</p><h1>잘 풀었어요!</h1><p>한 문제를 차분히 완성했네요.</p><div class="win-stats"><div><small>걸린 시간</small><strong>${formatTime(finished.seconds)}</strong></div><div><small>실수</small><strong>${finished.mistakes}회</strong></div></div><button class="primary-button" id="next-button">${finished.number === 100 ? '난이도 선택으로' : '다음 문제 풀기'} ${icon('arrow')}</button><button class="text-button" id="win-home-button">홈으로</button></section>`;
-  app.querySelector('#next-button').addEventListener('click', () => finished.number === 100 ? renderHome() : openLevel(activeLevel));
+  app.innerHTML = `<section class="win-shell"><div class="win-symbol">✓</div><p class="eyebrow">${level.name} · ${finished.number}번 문제</p><h1>잘 풀었어요!</h1><p>한 문제를 차분히 완성했네요.</p><div class="win-stats"><div><small>걸린 시간</small><strong>${formatTime(finished.seconds)}</strong></div><div><small>실수</small><strong>${finished.mistakes}회</strong></div></div><button class="primary-button" id="next-button">문제 목록으로 ${icon('arrow')}</button><button class="text-button" id="win-home-button">난이도 선택으로</button></section>`;
+  app.querySelector('#next-button').addEventListener('click', renderPuzzleSelect);
   app.querySelector('#win-home-button').addEventListener('click', renderHome);
 }
 function togglePause() {
