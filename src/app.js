@@ -12,6 +12,8 @@ let screen = 'home';
 let activeLevel = null;
 let selected = -1;
 let noteMode = false;
+let showNotes = true;
+let settingsOpen = false;
 let paused = false;
 let undoStack = [];
 let tickHandle;
@@ -20,9 +22,9 @@ let lastTick = 0;
 function loadStore() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    if (saved?.levels) return saved;
+    if (saved?.levels) return { ...saved, settings: { ...saved.settings, showMistakes: saved.settings?.showMistakes !== false } };
   } catch { /* Corrupt or unavailable storage starts a fresh local game. */ }
-  return { levels: Object.fromEntries(LEVELS.map(level => [level.id, { completed: 0, game: null }])) };
+  return { levels: Object.fromEntries(LEVELS.map(level => [level.id, { completed: 0, game: null }])), settings: { showMistakes: true } };
 }
 
 function saveStore() {
@@ -51,6 +53,9 @@ function icon(name) {
     play: '<path d="m8 5 11 7-11 7z"/>',
     arrow: '<path d="M5 12h14m-6-6 6 6-6 6"/>',
     close: '<path d="M5 5 19 19M19 5 5 19"/>',
+    settings: '<path d="M10 2h4l.5 2.2 1.8.8 1.9-1.2 2.8 2.8-1.2 1.9.8 1.8L22 10v4l-2.2.5-.8 1.8 1.2 1.9-2.8 2.8-1.9-1.2-1.8.8L14 22h-4l-.5-2.2-1.8-.8-1.9 1.2L3 17.4l1.2-1.9-.8-1.8L2 14v-4l2.2-.5.8-1.8-1.2-1.9L6.6 3l1.9 1.2 1.8-.8z"/><circle cx="12" cy="12" r="3"/>',
+    eye: '<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z"/><circle cx="12" cy="12" r="2.5"/>',
+    eyeOff: '<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z"/><circle cx="12" cy="12" r="2.5"/><path d="M3 21 21 3"/>',
   };
   return `<svg viewBox="0 0 24 24" aria-hidden="true" ${common}>${paths[name]}</svg>`;
 }
@@ -86,7 +91,7 @@ function openLevel(level) {
     saveStore();
   }
   if (removeInvalidNotes()) saveStore();
-  selected = -1; noteMode = false; paused = false; undoStack = [];
+  selected = -1; noteMode = false; showNotes = true; settingsOpen = false; paused = false; undoStack = [];
   renderGame(); startClock();
 }
 
@@ -126,33 +131,47 @@ function cellMarkup(i) {
   if (i === selected) classes.push('selected');
   else if (selected >= 0 && related(i, selected)) classes.push('related');
   if (selectedValue && value === selectedValue && i !== selected) classes.push('matching');
-  if (!isGiven(i) && value && value !== Number(puzzle().solution[i])) classes.push('wrong');
+  if (store.settings.showMistakes && !isGiven(i) && value && value !== Number(puzzle().solution[i])) classes.push('wrong');
   if (i % 9 === 2 || i % 9 === 5) classes.push('box-right');
   if (Math.floor(i / 9) === 2 || Math.floor(i / 9) === 5) classes.push('box-bottom');
-  const notes = !value ? `<span class="notes-grid">${Array.from({ length: 9 }, (_, n) => `<span>${game().notes[i].includes(n + 1) ? n + 1 : ''}</span>`).join('')}</span>` : '';
-  return `<button class="${classes.join(' ')}" data-cell="${i}" role="gridcell" aria-selected="${i === selected}" aria-label="${Math.floor(i / 9) + 1}행 ${i % 9 + 1}열, ${value ? `${value}${isGiven(i) ? ', 시작 숫자' : ''}` : game().notes[i].length ? `메모 ${game().notes[i].join(', ')}` : '빈칸'}">${value || notes}</button>`;
+  const notes = !value && showNotes ? `<span class="notes-grid">${Array.from({ length: 9 }, (_, n) => `<span>${game().notes[i].includes(n + 1) ? n + 1 : ''}</span>`).join('')}</span>` : '';
+  return `<button class="${classes.join(' ')}" data-cell="${i}" role="gridcell" aria-selected="${i === selected}" aria-label="${Math.floor(i / 9) + 1}행 ${i % 9 + 1}열, ${value ? `${value}${isGiven(i) ? ', 시작 숫자' : ''}` : showNotes && game().notes[i].length ? `메모 ${game().notes[i].join(', ')}` : '빈칸'}">${value || notes}</button>`;
+}
+
+function settingsMarkup() {
+  return `<div class="overlay settings-overlay" role="dialog" aria-modal="true" aria-labelledby="settings-title"><div class="settings-panel">
+    <div class="settings-heading"><h2 id="settings-title">게임 설정</h2><button class="icon-button" id="settings-close" aria-label="설정 닫기">${icon('close')}</button></div>
+    <div class="settings-row"><div><strong>오답 공개</strong><small>잘못 입력한 숫자를 빨간색으로 표시</small></div><button class="setting-switch" id="wrong-toggle" role="switch" aria-label="오답 공개" aria-checked="${store.settings.showMistakes}"><span></span></button></div>
+    <button class="primary-button settings-done" id="settings-done">완료</button>
+  </div></div>`;
 }
 
 function renderGame() {
   screen = 'game';
   const level = LEVELS.find(item => item.id === activeLevel);
-  app.innerHTML = `<section class="game-shell"><header class="game-header"><button class="icon-button" id="home-button" aria-label="홈으로">${icon('back')}</button><div class="game-title"><span>하루 스도쿠</span><small>${level.name} · ${levelState().completed + 1} / 100</small></div><div class="header-spacer"></div></header>
+  app.innerHTML = `<section class="game-shell"><header class="game-header"><button class="icon-button" id="home-button" aria-label="홈으로">${icon('back')}</button><div class="game-title"><span>하루 스도쿠</span><small>${level.name} · ${levelState().completed + 1} / 100</small></div><button class="icon-button settings-button" id="settings-button" aria-label="게임 설정">${icon('settings')}</button></header>
     <div class="game-meta"><div><small>난이도</small><strong>${level.name}</strong></div><div><small>실수</small><strong id="mistake-label">${game().mistakes}회</strong></div><div><small>시간</small><strong id="time-label">${formatTime(game().seconds)}</strong></div><button class="pause-button" id="pause-button" aria-label="일시정지">${icon('pause')}</button></div>
     <div class="board-wrap"><div class="board" role="grid" aria-label="스도쿠 게임판">${Array.from({ length: 81 }, (_, i) => cellMarkup(i)).join('')}</div></div>
-    <div class="game-bottom"><div class="tools"><button class="tool" id="undo-button" aria-label="실행 취소" ${undoStack.length ? '' : 'disabled'}>${icon('undo')}<span>실행 취소</span></button><button class="tool" id="erase-button" aria-label="선택 칸 지우기">${icon('erase')}<span>지우기</span></button><button class="tool ${noteMode ? 'active' : ''}" id="notes-button" aria-pressed="${noteMode}">${icon('notes')}<span>메모 <b>${noteMode ? '켜짐' : '꺼짐'}</b></span></button><button class="tool" id="hint-button" aria-label="선택 칸 힌트">${icon('hint')}<span>힌트</span></button></div>
+    <div class="game-bottom"><div class="tools"><button class="tool" id="undo-button" aria-label="실행 취소" ${undoStack.length ? '' : 'disabled'}>${icon('undo')}<span>실행 취소</span></button><button class="tool" id="erase-button" aria-label="선택 칸 지우기">${icon('erase')}<span>지우기</span></button><button class="tool ${noteMode ? 'active' : ''}" id="notes-button" aria-label="메모 입력 ${noteMode ? '켜짐' : '꺼짐'}" aria-pressed="${noteMode}">${icon('notes')}<span>메모 입력</span></button><button class="tool ${showNotes ? 'active' : ''}" id="show-notes-button" aria-label="메모 표시 ${showNotes ? '켜짐' : '꺼짐'}" aria-pressed="${showNotes}">${icon(showNotes ? 'eye' : 'eyeOff')}<span>메모 표시</span></button><button class="tool" id="hint-button" aria-label="선택 칸 힌트">${icon('hint')}<span>힌트</span></button></div>
     <div class="keypad" aria-label="숫자 입력">${Array.from({ length: 9 }, (_, i) => `<button data-digit="${i + 1}" aria-label="숫자 ${i + 1}${digitCompleted(i + 1) ? ', 모두 채움' : ''}" ${digitCompleted(i + 1) ? 'disabled' : ''}>${i + 1}</button>`).join('')}</div></div>
     ${paused ? `<div class="overlay"><div class="dialog"><div class="dialog-symbol">Ⅱ</div><p class="eyebrow">잠시 쉬어가세요</p><h2>일시정지</h2><p>게임판과 시간이 멈췄습니다.</p><button class="primary-button" id="resume-button">계속 풀기 ${icon('arrow')}</button><button class="text-button" id="pause-home-button">홈으로</button></div></div>` : ''}
+    ${settingsOpen ? settingsMarkup() : ''}
   </section>`;
   app.querySelector('#home-button').addEventListener('click', renderHome);
   app.querySelector('#pause-button').addEventListener('click', togglePause);
+  app.querySelector('#settings-button').addEventListener('click', toggleSettings);
   app.querySelector('#undo-button').addEventListener('click', undo);
   app.querySelector('#erase-button').addEventListener('click', erase);
-  app.querySelector('#notes-button').addEventListener('click', () => { noteMode = !noteMode; renderGame(); });
+  app.querySelector('#notes-button').addEventListener('click', () => { noteMode = showNotes ? !noteMode : true; showNotes = true; renderGame(); });
+  app.querySelector('#show-notes-button').addEventListener('click', () => { showNotes = !showNotes; if (!showNotes) noteMode = false; renderGame(); app.querySelector('#show-notes-button')?.focus(); });
   app.querySelector('#hint-button').addEventListener('click', hint);
   app.querySelectorAll('[data-cell]').forEach(button => button.addEventListener('click', () => { selected = Number(button.dataset.cell); renderGame(); }));
   app.querySelectorAll('[data-digit]').forEach(button => button.addEventListener('click', () => enterNumber(Number(button.dataset.digit))));
   app.querySelector('#resume-button')?.addEventListener('click', togglePause);
   app.querySelector('#pause-home-button')?.addEventListener('click', renderHome);
+  app.querySelector('#settings-close')?.addEventListener('click', toggleSettings);
+  app.querySelector('#settings-done')?.addEventListener('click', toggleSettings);
+  app.querySelector('#wrong-toggle')?.addEventListener('click', () => { store.settings.showMistakes = !store.settings.showMistakes; saveStore(); renderGame(); app.querySelector('#wrong-toggle')?.focus(); });
 }
 
 function snapshot() { undoStack.push({ values: [...game().values], notes: game().notes.map(notes => [...notes]) }); if (undoStack.length > 100) undoStack.shift(); }
@@ -162,7 +181,7 @@ function editable() {
   return true;
 }
 function enterNumber(digit) {
-  if (paused || digitCompleted(digit) || !editable()) return;
+  if (paused || settingsOpen || digitCompleted(digit) || !editable()) return;
   const state = game();
   if (noteMode) {
     if (state.values[selected]) { showToast('숫자가 있는 칸에는 메모할 수 없어요.'); return; }
@@ -181,17 +200,17 @@ function enterNumber(digit) {
   saveStore(); renderGame(); checkWin();
 }
 function erase() {
-  if (paused || !editable()) return;
+  if (paused || settingsOpen || !editable()) return;
   if (!game().values[selected] && !game().notes[selected].length) return;
   snapshot(); game().values[selected] = 0; game().notes[selected] = []; saveStore(); renderGame();
 }
 function undo() {
-  if (paused || !undoStack.length) return;
+  if (paused || settingsOpen || !undoStack.length) return;
   const previous = undoStack.pop();
   game().values = previous.values; game().notes = previous.notes; saveStore(); renderGame();
 }
 function hint() {
-  if (paused || !editable()) return;
+  if (paused || settingsOpen || !editable()) return;
   if (game().values[selected] === Number(puzzle().solution[selected])) { showToast('이미 맞는 숫자예요.'); return; }
   snapshot(); game().values[selected] = Number(puzzle().solution[selected]); game().notes[selected] = [];
   removeRelatedNotes(selected, game().values[selected]);
@@ -213,6 +232,14 @@ function togglePause() {
   if (paused) stopClock(); else startClock();
   renderGame();
 }
+function toggleSettings() {
+  settingsOpen = !settingsOpen;
+  if (settingsOpen) stopClock();
+  else if (!paused) startClock();
+  renderGame();
+  if (settingsOpen) app.querySelector('#settings-close')?.focus();
+  else app.querySelector('#settings-button')?.focus();
+}
 function startClock() {
   stopClock(); lastTick = Date.now();
   tickHandle = setInterval(() => {
@@ -233,9 +260,13 @@ function showToast(message) {
   document.body.append(toast); setTimeout(() => toast.remove(), 2600);
 }
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden && screen === 'game' && !paused) { paused = true; stopClock(); renderGame(); }
+  if (document.hidden && screen === 'game' && !paused && !settingsOpen) { paused = true; stopClock(); renderGame(); }
 });
 document.addEventListener('keydown', event => {
+  if (settingsOpen) {
+    if (event.key === 'Escape') toggleSettings();
+    return;
+  }
   if (screen !== 'game' || paused) return;
   if (/^[1-9]$/.test(event.key)) enterNumber(Number(event.key));
   else if (event.key === 'Backspace' || event.key === 'Delete') erase();
